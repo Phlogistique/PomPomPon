@@ -4,8 +4,13 @@
 #include <opencv/cv.h>
 #include <opencv/highgui.h>
 
-#define PROCESSING_WINDOW "Traitement"
-#define SMOOTH_PARAM "Aperture du flou"
+#define WINDOW(name)		"PomPom - " name
+
+#define PROCESSING_WINDOW	WINDOW("Traitement")
+#define INPUT_WINDOW		WINDOW("Input")
+#define INTERSECT_WINDOW	WINDOW("Intersect")
+
+#define SMOOTH_PARAM		"Aperture du flou"
 
 #define APERTURE (1+aperture*2)
 
@@ -19,6 +24,7 @@ int sat_target = 127;
 int sat_tolerance = 10;
 int val_target = 127;
 int val_tolerance = 10;
+int dilate_iter = 3;
 IplImage *resize_frame;
 IplImage *smooth_frame;
 
@@ -34,8 +40,10 @@ void on_mouse(int event, int x, int y, int flags, void* param)
 
 	hue_target = pixel[0];
 	sat_target = pixel[1];
-	val_target = pixel[1];
-	cout << "hue=" << hue_target << " sat=" << sat_target << endl;
+	val_target = pixel[2];
+	cout	<< "hue="  << hue_target
+		<< " sat=" << sat_target
+		<< " val=" << val_target << endl;
 }
 
 int clamp(int x, int min, int max) {
@@ -44,37 +52,38 @@ int clamp(int x, int min, int max) {
 	return x;
 }
 
-#define CONTOUR_DURATION 30
-// Point d'entrée du programme
 int main(int argc, char *const argv[])
 {
 	int aperture = 1;
 	//int contour_bs = 20;
 
-	cvNamedWindow("Input", CV_WINDOW_AUTOSIZE);
-	cvSetMouseCallback("Input", on_mouse);
+	cvNamedWindow(INPUT_WINDOW, CV_WINDOW_AUTOSIZE);
 	cvNamedWindow(PROCESSING_WINDOW, CV_WINDOW_AUTOSIZE);
-	cvNamedWindow("Intersect", CV_WINDOW_AUTOSIZE);
+	cvNamedWindow(INTERSECT_WINDOW, CV_WINDOW_AUTOSIZE);
+
+	cvSetMouseCallback(INPUT_WINDOW, on_mouse);
 
 	cvCreateTrackbar(SMOOTH_PARAM, PROCESSING_WINDOW,
 			&aperture, 10, NULL);
 	cvCreateTrackbar("Hue tolerance", PROCESSING_WINDOW, &hue_tolerance, 127, NULL);
 	cvCreateTrackbar("Sat tolerance", PROCESSING_WINDOW, &sat_tolerance, 127, NULL);
 	cvCreateTrackbar("Val tolerance", PROCESSING_WINDOW, &val_tolerance, 127, NULL);
-
+	cvCreateTrackbar("Dilatation", PROCESSING_WINDOW, &dilate_iter, 20, NULL);
 
 	CvCapture *camera = cvCreateCameraCapture(CV_CAP_ANY);
 
 	IplImage *camera_frame = cvQueryFrame(camera);
 
+	if (NULL == camera_frame) {
+		cerr << "No webcam, exiting." << endl;
+		exit(1);
+	}
+
 	resize_frame = cvCreateImage(IMG_SZ, IPL_DEPTH_8U, 3);
 	IplImage *hsv_frame = cvCreateImage(IMG_SZ, IPL_DEPTH_8U, 3);
 	smooth_frame = cvCreateImage(IMG_SZ, IPL_DEPTH_8U, 3);
 
-	IplImage *hue = cvCreateImage(IMG_SZ, IPL_DEPTH_8U, 1);
-	IplImage *sat = cvCreateImage(IMG_SZ, IPL_DEPTH_8U, 1);
-	IplImage *val = cvCreateImage(IMG_SZ, IPL_DEPTH_8U, 1);
-
+	IplImage *bin_frame = cvCreateImage(IMG_SZ, IPL_DEPTH_8U, 1);
 	IplImage *mask = cvCreateImage(IMG_SZ, IPL_DEPTH_8U, 1);
 
 	// Boucle de traitements
@@ -83,7 +92,7 @@ int main(int argc, char *const argv[])
 		cvResize(camera_frame, resize_frame, CV_INTER_NN);
 		cvCvtColor(resize_frame, hsv_frame, CV_RGB2HSV);
 		cvSmooth(hsv_frame, smooth_frame, CV_MEDIAN, APERTURE);
-		cvSplit(smooth_frame, hue, sat, val, NULL);
+		//cvSplit(smooth_frame, hue, sat, val, NULL);
 		
 		CvScalar lower = cvScalar(
 				clamp(hue_target - hue_tolerance, 0, 0xFF),
@@ -94,8 +103,9 @@ int main(int argc, char *const argv[])
 				clamp(sat_target + sat_tolerance, 0, 0xFF),
 				clamp(val_target + val_tolerance, 0, 0xFF));
 
-		cvInRangeS(hue, lower, upper, mask);
+		cvInRangeS(smooth_frame, lower, upper, bin_frame);
 
+		cvDilate(bin_frame, mask, NULL, dilate_iter);
 #if 0
 		cvDilate(bin_frame, eroded_frame, NULL, ITERATION);
 
@@ -129,8 +139,8 @@ int main(int argc, char *const argv[])
 #endif
 
 		// Affichage des images
-		cvShowImage("Input", resize_frame);
-		cvShowImage("Intersect", mask);
+		cvShowImage(INPUT_WINDOW, resize_frame);
+		cvShowImage(INTERSECT_WINDOW, mask);
 
 		// Image suivante ou arrêt
 		int key = cvWaitKey(40);

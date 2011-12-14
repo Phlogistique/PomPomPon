@@ -1,4 +1,4 @@
-CFLAGS = -g -Wall -lcv -lhighgui
+CFLAGS = -g -Wall -lopencv_core -lopencv_highgui -lopencv_imgproc
 
 all: pompom
 
