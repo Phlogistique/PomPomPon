@@ -1,119 +1,30 @@
 import cv
 import time
+import pygame
+import sys
+from pygame.locals import *
 from itertools import cycle
+from math import sqrt
 
-class PomPomPon:
-    COLORS = cycle([
-        cv.CV_RGB(255,0,0), cv.CV_RGB(0,255,0), cv.CV_RGB(0,0,255),
-        cv.CV_RGB(255,255,0), cv.CV_RGB(255,0,255), cv.CV_RGB(0,255,255)])
-
-    def __init__(self, hue_target=127, hue_tolerance=40, sat_target=127,
-            sat_tolerance=40, val_target=127, val_tolerance=50):
-
-        self.hue_target = hue_target
-        self.hue_tolerance = hue_tolerance
-        self.sat_target = sat_target
-        self.sat_tolerance = sat_tolerance
-        self.val_target = val_target
-        self.val_tolerance = val_tolerance
-
-        self.color = PomPomPon.COLORS.next()
-
-        self.calibration_done = False
-
-        self.set_bounds()
-
-    def set_target(self, hue_target=127, sat_target=127, val_target=127):
-        self.hue_target = hue_target
-        self.sat_target = sat_target
-        self.val_target = val_target
-        self.set_bounds()
-        self.calibration_done = True
-
-    def set_bounds(self):
-
-        def clamp(x, m, M):
-            if x < m: return m
-            if x > M: return M
-            return x
-
-        def clamp256(v): return clamp(v, 0, 0xFF)
-
-        self.lower = cv.Scalar(
-                clamp256(self.hue_target - self.hue_tolerance),
-                clamp256(self.sat_target - self.sat_tolerance),
-                clamp256(self.val_target - self.val_tolerance))
-        self.upper = cv.Scalar(
-                clamp256(self.hue_target + self.hue_tolerance),
-                clamp256(self.sat_target + self.sat_tolerance),
-                clamp256(self.val_target + self.val_tolerance))
+from pompompon import PomPomPon
 
 class PomPom:
-    def _window_name(name):
-        return "PomPom - %s" % name
+    def __init__(self, show_binary=None):
+        self.show_binary = show_binary
 
-    INPUT_WINDOW = _window_name("Main window")
-    PROCESSING_WINDOW = _window_name("Traitement")
-    INTERSECT_WINDOW = _window_name("Intersect")
-
-    SMOOTH_PARAM = "Aperture du flou"
-
-    def cb_set(self, attr):
-        def _():
-            for i in self.pompom:
-                setattr(i, attr, val)
-                i.set_bounds()
-        return _
-
-    def set_aperture(self, aperture):
-        self.aperture = aperture * 2 + 1
-
-    def on_mouse(self, event, x, y, flags, param):
-
-        if event != cv.CV_EVENT_LBUTTONUP:
-            return
-
-        pompon = self.pomponi.next()
-        hue, sat, val = self.smooth_frame[y,x] # (y,x), not (x,y). No idea why
-        pompon.set_target(hue, sat, val)
-
-        print "color at (%d,%d) = (%d,%d,%d)" % (x, y, hue, sat, val)
-
-    def __init__(self):
         self.init_params()
-        self.init_ui()
         self.init_cv()
+        self.init_pygame()
         self.game()
 
     def init_params(self):
-        self.dilatation = 3
+        self.dilatation = 2
 
-        self.initial_aperture = 10
-        self.set_aperture(self.initial_aperture)
-
-        self.size = (320, 240)
+        self.process_size = (320, 240)
+        self.display_size = (640, 480)
 
         self.pompon = [PomPomPon(), PomPomPon()]
         self.pomponi = cycle(self.pompon)
-
-        self.POSITIONS = map(self.coord, self.POSITIONS)
-
-    def init_ui(self):
-        cv.NamedWindow(self.INPUT_WINDOW, cv.CV_WINDOW_AUTOSIZE)
-        cv.NamedWindow(self.PROCESSING_WINDOW, cv.CV_WINDOW_AUTOSIZE)
-
-        cv.SetMouseCallback(self.INPUT_WINDOW, self.on_mouse)
-
-        cv.CreateTrackbar("Hue tolerance", self.PROCESSING_WINDOW,
-                self.pompon[0].hue_tolerance, 127, self.cb_set("hue_tolerance"))
-        cv.CreateTrackbar("Sat tolerance", self.PROCESSING_WINDOW,
-                self.pompon[0].sat_tolerance, 127, self.cb_set("sat_tolerance"))
-        cv.CreateTrackbar("Val tolerance", self.PROCESSING_WINDOW,
-                self.pompon[0].val_tolerance, 127, self.cb_set("val_tolerance"))
-        cv.CreateTrackbar("Flou", self.PROCESSING_WINDOW,
-                self.initial_aperture, 20, self.set_aperture)
-        cv.CreateTrackbar("Dilatation", self.PROCESSING_WINDOW,
-                3, 20, self.cb_set("dilatation"))
 
     def init_cv(self):
         # init image capture
@@ -121,31 +32,78 @@ class PomPom:
 
         # create image buffers
 
-        def img(chans=3):
-            return cv.CreateImage(self.size, cv.IPL_DEPTH_8U, chans)
+        def img(chans=3, size=self.process_size):
+            return cv.CreateImage(size, cv.IPL_DEPTH_8U, chans)
 
+        self.frame_rgb      = img(size=self.display_size)
         self.resized_frame  = img()
         self.hsv_frame      = img()
         self.smooth_frame   = img()
         self.bin_frame      = img(1)
         self.mask           = img(1)
+        if self.show_binary:
+            self.mask2          = img(1)
+            self.miniature      = img()
 
+    def init_pygame(self):
+        pygame.init()
+        self.fps_clock = pygame.time.Clock()
+        self.window_surface = pygame.display.set_mode(self.display_size)
+        self.canvas = pygame.Surface(self.display_size, flags=SRCALPHA)
+        pygame.display.set_caption("PomPom")
+        self.font = pygame.font.Font('DejaVuSans-Bold.ttf', 32)
 
     def in_range(self, pompon, src, dst):
         cv.InRangeS(src, pompon.lower, pompon.upper, dst);
 
+    def alpha(self, color, a):
+        trans = pygame.Color(color.r, color.g, color.b, color.a)
+        trans.a = int(a)
+        return trans
+
     def target(self, center, color, radius = 30):
-        for i in [3,2,1]:
-            cv.Circle(self.frame, center, int(radius * i / 3.0), color, thickness=3)
+        pygame.draw.circle(
+                self.canvas,
+                color, #self.alpha(color, 0.3 * color.a),
+                self.sym2disp(center),
+                radius,
+                0)
+        pygame.draw.circle(
+                self.canvas,
+                color,
+                self.sym2disp(center),
+                radius,
+                3)
 
-    def coord(self, frac, y=None):
-        x, y = frac if y is None else (frac, y)
-        sx, sy = self.size
+    sym2disp = lambda self, x, y=None: self.convert_coord(
+            (1,1), self.display_size, x, y)
+    sym2proc = lambda self, x, y=None: self.convert_coord(
+            (1,1), self.process_size, x, y)
 
-        x = int(((x + 1) * sx) / 2)
-        y = int(((y + 1) * sy) / 2)
+    disp2proc = lambda self, x, y=None: self.convert_coord(
+            self.display_size, self.process_size, x, y)
+    proc2disp = lambda self, x, y=None: self.convert_coord(
+            self.process_size, self.display_size, x, y)
 
-        return (x,y)
+    disp2sym = lambda self, x, y=None: self.coord_2sym(
+            self.display_size, x, y)
+    proc2sym = lambda self, x, y=None: self.coord_2sym(
+            self.process_size, x, y)
+
+    def convert_coord(self, from_size, to_size, frac, y=None):
+        if y is not None: frac = (frac, y)
+        x,y = frac
+        fx,fy = from_size
+        tx,ty = to_size
+
+        return (int(x*tx/fx), int(y*ty/fy))
+
+    def coord_2sym(self, from_size, frac, y=None):
+        if y is not None: frac = (frac, y)
+        x,y = frac
+        fx,fy = from_size
+
+        return (x/float(fx), y/float(fy))
 
     POSITIONS = [
     #  (-1,1)             (1,1)
@@ -157,16 +115,21 @@ class PomPom:
     #   |                  |
     #   +------------------+
     #  (-1,-1)            (1,1)
-            (-1.0/3, -1.0/2),
-            (-2.0/3,      0),
-            (-1.0/3,  1.0/2),
-            (     0,  3.0/4),
-            ( 1.0/3,  1.0/2),
-            ( 2.0/3,      0),
-            ( 1.0/3, -1.0/2)]
+            (0.33, 0.75),
+            (0.17, 0.50),
+            (0.33, 0.25),
+            (0.50, 0.12),
+            (0.67, 0.25),
+            (0.83, 0.50),
+            (0.67, 0.75)]
 
-    RED = cv.CV_RGB(255,0,0)
-    BLUE = cv.CV_RGB(0,0,255)
+    RED = pygame.Color(255,0,0)
+    BLUE = pygame.Color(0,0,255)
+
+    def wait(self, seconds):
+        start = time.time()
+        while time.time() - start < seconds:
+            self.loop.next()
 
     def do_for(self, seconds, f):
         start = time.time()
@@ -184,80 +147,140 @@ class PomPom:
             f()
             self.loop.next()
 
-        
     def game(self):
         self.loop = self.run()
 
-        self.left = self.coord(-0.7,0.7)
-        self.right = self.coord(0.7,0.7)
-        self.left_color = cv.CV_RGB(255,100,0)
-        self.right_color = cv.CV_RGB(0,100,255)
+        self.left = (0.2, 0.3)
+        self.right = (0.8, 0.3)
+        self.left_color = self.pompon[0].color
+        self.right_color = self.pompon[1].color
 
         next(self.loop) # retrieve first frame
-        self.do_for(1, self.draw_calibration_targets)
-        self.calibration_done = False
-        self.do_until(lambda: self.calibration_done, self.calibration_step)
+
+        self.draw_calibration_targets()
+
+        bg = None
+        for i in range(5, -1, -1): # from 10 to 0
+            msg = self.font.render("%d" % i, True, pygame.Color("black"))
+            rect = msg.get_rect()
+            rect.center = self.sym2disp(0.5, 0.2)
+            if bg is None:
+                bg = rect.inflate(3,3)
+
+            self.canvas.fill((255,255,255,100), bg)
+            self.canvas.blit(msg, rect)
+            self.wait(1)
+
+        self.calibrate(self.pompon[0], self.left)
+        self.calibrate(self.pompon[1], self.right)
+
         self.do_forever(self.play_step)
+
+    def calibrate(self, pompon, coord, recalibrate=None):
+        x, y = self.sym2proc(coord)
+        hue, sat, val = self.smooth_frame[y,x] # (y,x), not (x,y).
+        pompon.set_target(hue, sat, val, recalibrate=recalibrate)
 
     def draw_calibration_targets(self):
         self.target(self.left, self.left_color)
         self.target(self.right, self.right_color)
 
     def calibration_step(self):
-        self.draw_calibration_targets()
-
-    def play_step(self):
         pass
 
-    def run(self):
+    def play_step(self):
+        self.canvas.fill((0,0,0,0))
+        for p in self.pompon:
+            if p.pos is None:
+                print "Pompon not on screen"
+            else:
+                self.target(p.pos, p.color)
 
-        def next_frame():
-            self.frame = cv.QueryFrame(self.camera)
-            return self.frame
-        
+    def process(self):
+
         def seq_to_iter(seq):
             while seq:
                 yield seq
                 seq = seq.h_next()
 
-        def rect_size(r):
-            _,_,w,h = r
-            return w * h
+        #back to a simple scoring method because I'm not sure this works
+        def score_rect(r,p):
+            x,y,w,h = r
+            #if p.pos is None:
+            #    distance = 0
+            #else:
+            #    px, py = self.sym2proc(p.pos)
+            #    distance = sqrt(((x+w/2)-px)**2 + ((y+h/2)-py)**2) # XXX arbitraire
 
+            return w * h #- distance
+
+        cv.Resize(self.frame, self.resized_frame)
+        cv.CvtColor(self.resized_frame, self.hsv_frame, cv.CV_RGB2HSV)
+        cv.Smooth(self.hsv_frame, self.smooth_frame, cv.CV_GAUSSIAN,
+                31)
+
+        for p in self.pompon:
+            if p.calibration_done:
+
+                self.in_range(p, self.smooth_frame, self.bin_frame)
+                cv.Erode(self.bin_frame, self.mask, None, self.dilatation);
+
+                if self.show_binary:
+                    self.mask2 = cv.CloneImage(self.mask) # for miniature
+
+                contour = seq_to_iter(cv.FindContours(self.mask,
+                        cv.CreateMemStorage(), cv.CV_RETR_EXTERNAL,
+                        cv.CV_CHAIN_APPROX_SIMPLE));
+
+                rects = map((lambda c: cv.BoundingRect(c, 0)), contour)
+                if rects:
+                    x,y,w,h = max(rects, key=lambda r: score_rect(r,p))
+
+                    p.pos = self.proc2sym(x+w/2,y+h/2)
+                    #self.calibrate(p, p.pos, recalibrate=0.05)
+                    
+                    # TODO here draw something for debugging
+                    #cv.Rectangle(self.resized_frame, (x, y), (x+w, y+h),
+                    #        p.color, 3)
+
+    def display(self):
+        cv.CvtColor(self.frame, self.frame_rgb, cv.CV_BGR2RGB)
+        pg_img = pygame.image.frombuffer(
+                self.frame_rgb.tostring(), cv.GetSize(self.frame), "RGB")
+        self.window_surface.blit(pg_img, (0,0))
+
+        if self.show_binary:
+            cv.Merge(self.mask2, self.mask2, self.mask2, None, self.miniature)
+            pg_img = pygame.image.frombuffer(
+                    self.miniature.tostring(), cv.GetSize(self.miniature), "RGB")
+            self.window_surface.blit(pg_img, (0,0))
+
+        self.window_surface.blit(self.canvas, (0,0))
+        pygame.display.update()
+
+    def handle_events(self):
+        for event in pygame.event.get():
+            if event.type is QUIT:
+                pygame.quit()
+                sys.exit(0)
+            elif event.type is KEYDOWN:
+                if event.key is K_ESCAPE:
+                    pygame.event.post(pygame.event.Event(QUIT))
+
+    def run(self):
+
+        def next_frame():
+            self.frame = cv.QueryFrame(self.camera)
+            cv.Flip(self.frame, None, 1)
+            return self.frame
 
         while next_frame():
-
-            cv.Resize(self.frame, self.resized_frame)
-            cv.Flip(self.resized_frame, None, 1)
-            cv.CvtColor(self.resized_frame, self.hsv_frame, cv.CV_RGB2HSV)
-            cv.Smooth(self.hsv_frame, self.smooth_frame, cv.CV_GAUSSIAN,
-                    self.aperture)
-
-            for p in self.pompon:
-                if p.calibration_done:
-
-                    self.in_range(p, self.smooth_frame, self.bin_frame)
-                    cv.Dilate(self.bin_frame, self.mask, None, self.dilatation);
-
-                    contour = seq_to_iter(cv.FindContours(self.mask,
-                            cv.CreateMemStorage(), cv.CV_RETR_EXTERNAL,
-                            cv.CV_CHAIN_APPROX_SIMPLE));
-
-                    rects = map((lambda c: cv.BoundingRect(c, 0)), contour)
-                    if rects:
-                        x,y,w,h = max(rects, key=rect_size)
-                        
-                        cv.Rectangle(self.resized_frame, (x, y), (x+w, y+h),
-                                p.color, 3)
-
-            cv.ShowImage(self.INPUT_WINDOW, self.resized_frame)
-
+            self.handle_events()
+            self.process()
             yield
-            cv.WaitKey(20)
+            self.display()
 
         # No webcam frame?
         print "No webcam frame! Exiting..."
         sys.exit(1)
-
-a = PomPom()
 
