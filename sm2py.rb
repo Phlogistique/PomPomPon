@@ -3,7 +3,7 @@ require 'pp'
 positions = [
   [0.15, 0.8],
   [0.20, 0.4],
-  [0.5, 0.1],
+  [0.5, 0.2],
   [0.80, 0.4],
   [0.85, 0.8]]
 
@@ -84,23 +84,28 @@ notes.each do |level_times|
 
   first = true
   mesures.each do |mesure|
-    tlen = (60 / bpm) * signature / mesure.length * 2
+    bps = bpm / 60
+    spb = 60 / bpm
+    bpn = signature / mesure.length
+
+    tlen = (60 / bpm) * signature / mesure.length
     mesure.each do |temps|
       temps.strip!
       temps.gsub!(/2/, "1")  # no hold
       temps.gsub!(/3/, "0") 
       temps.gsub!(/m/i, "0")  # no mines
-      next if temps == "0000"
+      unless temps == "0000"
 
-      eq = matchings[temps.strip]
-      if not eq
-        $stderr.puts "#{temps.strip} untranslatable!"
-        exit 1
-      end
+        eq = matchings[temps.strip]
+        if not eq
+          $stderr.puts "#{temps.strip} untranslatable!"
+          exit 1
+        end
 
-      eq.each do |touch|
-        f.puts "#{first ? "" : ","} Touch(#{(time*1000).to_i}, (#{positions[touch][0]},#{positions[touch][1]}))"
-        first = false
+        eq.each do |touch|
+          f.puts "#{first ? "" : ","} Touch(#{(time*1000).to_i}, (#{positions[touch][0]},#{positions[touch][1]}))"
+          first = false
+        end
       end
 
       time += tlen

@@ -10,11 +10,15 @@ from pompompon import PomPomPon
 from song import Note, Touch
 
 class PomPom:
-    def __init__(self, song, steps, show_binary=None):
+    def __init__(self, song, steps, show_binary=None, calibration_time=10,
+            delay=0, fullscreen=None):
         self.show_binary = show_binary
         with open(steps, 'r') as f:
             self.steps = eval(f.read()) # c'est tellement secure j'y crois meme pas
         self.song = song
+        self.calibration_time = calibration_time
+        self.delay = delay
+        self.fullscreen = pygame.FULLSCREEN if fullscreen else 0
 
         self.init_params()
         self.init_cv()
@@ -59,14 +63,12 @@ class PomPom:
     def init_pygame(self):
         pygame.init()
         self.fps_clock = pygame.time.Clock()
-        self.window_surface = pygame.display.set_mode(self.display_size)
+        self.window_surface = pygame.display.set_mode(self.display_size, self.fullscreen)
         self.canvas = pygame.Surface(self.display_size, flags=SRCALPHA)
         pygame.display.set_caption("PomPom")
         self.font = pygame.font.Font('DejaVuSans-Bold.ttf', 32)
 
         pygame.mixer.music.load(self.song)
-        pygame.mixer.music.play()
-        self.start = pygame.time.get_ticks()
 
     def in_range(self, pompon, src, dst):
         cv.InRangeS(src, pompon.lower, pompon.upper, dst);
@@ -169,6 +171,11 @@ class PomPom:
     def now(self):
         return pygame.time.get_ticks() - self.start 
 
+    def distance(self, a, b):
+        px, py = a
+        nx, ny = b
+        return sqrt(4/3.0*(px-nx)**2 + (py-ny)**2)
+
     def game(self):
 
         self.loop = self.run()
@@ -183,7 +190,7 @@ class PomPom:
         self.draw_calibration_targets()
 
         bg = None
-        for i in range(5, -1, -1): # from 10 to 0
+        for i in range(self.calibration_time, -1, -1): # from 10 to 0
             msg = self.font.render("%d" % i, True, pygame.Color("black"))
             rect = msg.get_rect()
             rect.center = self.sym2disp(0.5, 0.2)
@@ -202,8 +209,11 @@ class PomPom:
         bg.w = w
         self.score_bg = bg
 
+        pygame.mixer.music.play()
+        self.start = pygame.time.get_ticks()
+
         self.pre = []
-        self.preavis = (1100, 200)
+        self.preavis = (1800, 100)
         self.cur = []
         self.ko = []
         self.ok = []
@@ -228,27 +238,24 @@ class PomPom:
                     print "Pompon not on screen"
                     continue
 
-                self.target(p.pos, pygame.Color("black"),
-                        inside=pygame.Color("white"), radius=20)
-                for note in cur:
-                    px, py = p.pos
-                    nx, ny = note.pos
-
-                    distance = sqrt(4/3.0*(px-nx)**2 + (py-ny)**2)
-                    if distance < 0.1:
-                        cur.remove(note)
-                        ok.append(note)
+                for note in self.cur:
+                    if self.distance(p.pos, note.pos) < 0.1:
+                        self.cur.remove(note)
+                        self.ok.append(note)
                         self.hit()
-                        for i, kon in enumerate(ko):
+                        for i, kon in enumerate(self.ko):
                             if kon.pos == note.pos:
-                                ko.pop(i)
+                                self.ko.pop(i)
 
-            if len(self.steps) is None:
+            if not (len(self.steps) or 
+                    len(self.ko) or
+                    len(self.ok) or
+                    len(self.cur) or
+                    len(self.pre)):
                 break
 
             next(self.loop)
 
-        self.wait(5)
 
     def calibrate(self, pompon, coord, recalibrate=None):
         x, y = self.sym2proc(coord)
@@ -325,22 +332,24 @@ class PomPom:
             self.canvas.fill((0,0,0,0))
 
             self.canvas.fill((255,255,255,100), self.score_bg)
-            progressbar = self.score_bg.inflate(-2,-2)
-            progressbar.w = progressbar.w * 100 / self.score
+            progressbar = self.score_bg.inflate(-2,-9)
+            progressbar.w = progressbar.w * self.score / 100
 
             green = 255 * (self.score) / 100
             red = 255 - green
             self.canvas.fill((255,255,255,100), self.score_bg)
-            self.canvas.fill((red,green,0,100), self.progressbar)
-            msg = self.font.render("Miss: %d" % self.score_hit, True, pygame.Color("black"))
+            self.canvas.fill((red,green,0,255), progressbar)
+            msg = self.font.render("Miss: %d" % self.score_miss, True,
+                    pygame.Color("black"))
             rect = msg.get_rect()
             rect.topleft = (2,2)
             self.canvas.blit(msg, rect)
 
-            msg = self.font.render("Hit: %d" %self.score_miss, True, pygame.Color("black"))
+            msg = self.font.render("Hit: %d" %self.score_hit, True,
+                    pygame.Color("black"))
             rect = msg.get_rect()
-            w,_ = self.display_size()
-            rect.topleft = (w-2,2)
+            w,_ = self.display_size
+            rect.topright = (w-2,2)
             self.canvas.blit(msg, rect)
 
             for note in self.cur:
@@ -353,9 +362,19 @@ class PomPom:
             color = pygame.Color("blue")
             h,s,v,a = color.hsva
             for note in self.pre:
-                f = (note.time - self.now()) / float(self.preavis[1] - self.preavis[0])
+                f = 1 - ((note.time - self.preavis[1] - self.now()) /
+                                 float(self.preavis[0] - self.preavis[1]))
                 color.hsva = (h, int(s*f), v, int(a*f))
-                self.target(note.pos, color, filled=False)
+                wi,he = self.display_size
+                x,y = note.pos
+                pos = (x * f + 0.5 * (1-f), y * f + 1 * (1-f))
+
+                self.target(pos, color)
+
+            for p in self.pompon:
+                if p.pos is not None:
+                    self.target(p.pos, pygame.Color("black"),
+                            inside=pygame.Color("white"), radius=20)
 
         cv.CvtColor(self.frame, self.frame_rgb, cv.CV_BGR2RGB)
         pg_img = pygame.image.frombuffer(
