@@ -7,10 +7,14 @@ from itertools import cycle
 from math import sqrt
 
 from pompompon import PomPomPon
+from song import Note, Touch
 
 class PomPom:
-    def __init__(self, show_binary=None):
+    def __init__(self, song, steps, show_binary=None):
         self.show_binary = show_binary
+        with open(steps, 'r') as f:
+            self.steps = eval(f.read()) # c'est tellement secure j'y crois meme pas
+        self.song = song
 
         self.init_params()
         self.init_cv()
@@ -18,7 +22,7 @@ class PomPom:
         self.game()
 
     def init_params(self):
-        self.dilatation = 2
+        self.dilatation = 3
 
         self.process_size = (320, 240)
         self.display_size = (640, 480)
@@ -53,6 +57,10 @@ class PomPom:
         pygame.display.set_caption("PomPom")
         self.font = pygame.font.Font('DejaVuSans-Bold.ttf', 32)
 
+        pygame.mixer.music.load(self.song)
+        pygame.mixer.music.play()
+        self.start = pygame.time.get_ticks()
+
     def in_range(self, pompon, src, dst):
         cv.InRangeS(src, pompon.lower, pompon.upper, dst);
 
@@ -61,19 +69,20 @@ class PomPom:
         trans.a = int(a)
         return trans
 
-    def target(self, center, color, radius = 30):
-        pygame.draw.circle(
-                self.canvas,
-                color, #self.alpha(color, 0.3 * color.a),
-                self.sym2disp(center),
-                radius,
-                0)
+    def target(self, center, color, inside=None, radius=40, filled=True):
+        if filled:
+            pygame.draw.circle(
+                    self.canvas,
+                    inside or self.alpha(color, 0.3 * color.a),
+                    self.sym2disp(center),
+                    radius,
+                    0)
         pygame.draw.circle(
                 self.canvas,
                 color,
                 self.sym2disp(center),
                 radius,
-                3)
+                6)
 
     sym2disp = lambda self, x, y=None: self.convert_coord(
             (1,1), self.display_size, x, y)
@@ -137,6 +146,9 @@ class PomPom:
             f()
             self.loop.next()
 
+    def wait_until(self, cond):
+        self.do_until(cond, lambda: None)
+
     def do_until(self, cond, f):
         while not cond():
             f()
@@ -147,7 +159,11 @@ class PomPom:
             f()
             self.loop.next()
 
+    def now(self):
+        return pygame.time.get_ticks() - self.start 
+
     def game(self):
+
         self.loop = self.run()
 
         self.left = (0.2, 0.3)
@@ -174,7 +190,67 @@ class PomPom:
         self.calibrate(self.pompon[0], self.left)
         self.calibrate(self.pompon[1], self.right)
 
-        self.do_forever(self.play_step)
+
+        pre = []
+        cur = []
+        ko = []
+        ok = []
+        while True:
+            self.redraw = False
+
+            def transfer(fro, to, delay):
+                while len(fro) and fro[0].time < self.now() - delay:
+                    pop = fro.pop(0)
+                    if to is not None: to.append(pop)
+                    self.redraw = True
+
+            transfer(self.steps, pre, -1100)
+            transfer(pre, cur, -200)
+            transfer(cur, ko, 200)
+            transfer(ko, None, 1000)
+            transfer(ok, None, 1000)
+
+            self.canvas.fill((0,0,0,0))
+            for p in self.pompon:
+                if p.pos is None:
+                    print "Pompon not on screen"
+                    continue
+
+                self.target(p.pos, pygame.Color("black"),
+                        inside=pygame.Color("white"), radius=20)
+                for note in cur:
+                    px, py = p.pos
+                    nx, ny = note.pos
+
+                    distance = sqrt(4/3.0*(px-nx)**2 + (py-ny)**2)
+                    if distance < 0.1:
+                        cur.remove(note)
+                        ok.append(note)
+                        for i, kon in enumerate(ko):
+                            if kon.pos == note.pos:
+                                ko.pop(i)
+
+
+
+            if True:# self.redraw:
+
+                for note in cur:
+                    self.target(note.pos, pygame.Color("blue"))
+                for note in ok:
+                    self.target(note.pos, pygame.Color("green"), filled=False)
+                for note in ko:
+                    self.target(note.pos, pygame.Color("red"), filled=False)
+                for note in pre:
+                    self.target(note.pos, pygame.Color("blue"), filled=False)
+
+            if len(self.steps) is None:
+                break
+
+            next(self.loop)
+
+        self.wait(5)
+
+
 
     def calibrate(self, pompon, coord, recalibrate=None):
         x, y = self.sym2proc(coord)
@@ -188,13 +264,6 @@ class PomPom:
     def calibration_step(self):
         pass
 
-    def play_step(self):
-        self.canvas.fill((0,0,0,0))
-        for p in self.pompon:
-            if p.pos is None:
-                print "Pompon not on screen"
-            else:
-                self.target(p.pos, p.color)
 
     def process(self):
 

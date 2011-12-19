@@ -45,7 +45,9 @@ class PomPomPon:
         #        val_target * recalibrate)
 
         # what the hell this doesn't work
-        #self.color.hsva = (359-int(self.hue_target/256.0 * 360), 100, 100, 100)
+        
+        pg_hue = int(self.hue_target * 2)
+        self.color.hsva = (pg_hue, 100, 100, 100)
         self.set_bounds()
         self.calibration_done = True
 
