@@ -123,27 +123,6 @@ class PomPom:
 
         return (x/float(fx), y/float(fy))
 
-    POSITIONS = [
-    #  (-1,1)             (1,1)
-    #   +------------------+
-    #   |                  |
-    #   |                  |
-    #   |                  |
-    #   |                  |
-    #   |                  |
-    #   +------------------+
-    #  (-1,-1)            (1,1)
-            (0.33, 0.75),
-            (0.17, 0.50),
-            (0.33, 0.25),
-            (0.50, 0.12),
-            (0.67, 0.25),
-            (0.83, 0.50),
-            (0.67, 0.75)]
-
-    RED = pygame.Color(255,0,0)
-    BLUE = pygame.Color(0,0,255)
-
     def wait(self, seconds):
         start = time.time()
         while time.time() - start < seconds:
@@ -257,10 +236,10 @@ class PomPom:
             next(self.loop)
 
 
-    def calibrate(self, pompon, coord, recalibrate=None):
+    def calibrate(self, pompon, coord):
         x, y = self.sym2proc(coord)
         hue, sat, val = self.smooth_frame[y,x] # (y,x), not (x,y).
-        pompon.set_target(hue, sat, val, recalibrate=recalibrate)
+        pompon.set_target(hue, sat, val)
 
     def draw_calibration_targets(self):
         self.target(self.left, self.left_color)
@@ -277,16 +256,9 @@ class PomPom:
                 yield seq
                 seq = seq.h_next()
 
-        #back to a simple scoring method because I'm not sure this works
         def score_rect(r,p):
             x,y,w,h = r
-            #if p.pos is None:
-            #    distance = 0
-            #else:
-            #    px, py = self.sym2proc(p.pos)
-            #    distance = sqrt(((x+w/2)-px)**2 + ((y+h/2)-py)**2) # XXX arbitraire
-
-            return w * h #- distance
+            return w * h
 
         cv.Resize(self.frame, self.resized_frame)
         cv.CvtColor(self.resized_frame, self.hsv_frame, cv.CV_RGB2HSV)
@@ -311,11 +283,6 @@ class PomPom:
                     x,y,w,h = max(rects, key=lambda r: score_rect(r,p))
 
                     p.pos = self.proc2sym(x+w/2,y+h/2)
-                    #self.calibrate(p, p.pos, recalibrate=0.05)
-                    
-                    # TODO here draw something for debugging
-                    #cv.Rectangle(self.resized_frame, (x, y), (x+w, y+h),
-                    #        p.color, 3)
 
     def hit(self):
         self.score_hit += 1

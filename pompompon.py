@@ -26,25 +26,11 @@ class PomPomPon:
 
         self.set_bounds()
 
-    # recalibrate is a floating point number between 0.0 and 1.0
-    # DISABLED for now because I'm not sure it works
-    def set_target(self, hue_target=127, sat_target=127, val_target=127,
-            recalibrate=None):
+    def set_target(self, hue_target=127, sat_target=127, val_target=127):
 
-        #if recalibrate is None:
-        if True:
-            self.hue_target = hue_target
-            self.sat_target = sat_target
-            self.val_target = val_target
-        #else:
-        #    self.hue_target = (self.hue_target * (1 - recalibrate) +
-        #        hue_target * recalibrate)
-        #    self.sat_target = (self.sat_target * (1 - recalibrate) +
-        #        sat_target * recalibrate)
-        #    self.val_target = (self.val_target * (1 - recalibrate) +
-        #        val_target * recalibrate)
-
-        # what the hell this doesn't work
+        self.hue_target = hue_target
+        self.sat_target = sat_target
+        self.val_target = val_target
         
         pg_hue = int(self.hue_target * 2)
         self.color.hsva = (pg_hue, 100, 100, 100)
