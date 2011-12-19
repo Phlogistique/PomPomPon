@@ -30,6 +30,13 @@ class PomPom:
         self.pompon = [PomPomPon(), PomPomPon()]
         self.pomponi = cycle(self.pompon)
 
+        self.calibration_done = False
+
+        self.nsteps = len(self.steps)
+        self.score_miss = 0
+        self.score_hit = 0
+        self.score = 50
+
     def init_cv(self):
         # init image capture
         self.camera = cv.CaptureFromCAM(-1) # any camera
@@ -181,7 +188,7 @@ class PomPom:
             rect = msg.get_rect()
             rect.center = self.sym2disp(0.5, 0.2)
             if bg is None:
-                bg = rect.inflate(3,3)
+                bg = rect.inflate(4,4)
 
             self.canvas.fill((255,255,255,100), bg)
             self.canvas.blit(msg, rect)
@@ -190,27 +197,32 @@ class PomPom:
         self.calibrate(self.pompon[0], self.left)
         self.calibrate(self.pompon[1], self.right)
 
+        bg.topleft = (0,0)
+        w,_ = self.display_size
+        bg.w = w
+        self.score_bg = bg
 
-        pre = []
-        cur = []
-        ko = []
-        ok = []
+        self.pre = []
+        self.preavis = (1100, 200)
+        self.cur = []
+        self.ko = []
+        self.ok = []
+        self.calibration_done = True
         while True:
             self.redraw = False
 
-            def transfer(fro, to, delay):
+            def transfer(fro, to, delay, cb=None):
                 while len(fro) and fro[0].time < self.now() - delay:
                     pop = fro.pop(0)
                     if to is not None: to.append(pop)
-                    self.redraw = True
+                    if cb is not None: cb()
 
-            transfer(self.steps, pre, -1100)
-            transfer(pre, cur, -200)
-            transfer(cur, ko, 200)
-            transfer(ko, None, 1000)
-            transfer(ok, None, 1000)
+            transfer(self.steps, self.pre, -self.preavis[0])
+            transfer(self.pre, self.cur, -self.preavis[1])
+            transfer(self.cur, self.ko, 200, cb=lambda: self.miss())
+            transfer(self.ko, None, 1000)
+            transfer(self.ok, None, 1000)
 
-            self.canvas.fill((0,0,0,0))
             for p in self.pompon:
                 if p.pos is None:
                     print "Pompon not on screen"
@@ -226,22 +238,10 @@ class PomPom:
                     if distance < 0.1:
                         cur.remove(note)
                         ok.append(note)
+                        self.hit()
                         for i, kon in enumerate(ko):
                             if kon.pos == note.pos:
                                 ko.pop(i)
-
-
-
-            if True:# self.redraw:
-
-                for note in cur:
-                    self.target(note.pos, pygame.Color("blue"))
-                for note in ok:
-                    self.target(note.pos, pygame.Color("green"), filled=False)
-                for note in ko:
-                    self.target(note.pos, pygame.Color("red"), filled=False)
-                for note in pre:
-                    self.target(note.pos, pygame.Color("blue"), filled=False)
 
             if len(self.steps) is None:
                 break
@@ -249,8 +249,6 @@ class PomPom:
             next(self.loop)
 
         self.wait(5)
-
-
 
     def calibrate(self, pompon, coord, recalibrate=None):
         x, y = self.sym2proc(coord)
@@ -312,7 +310,53 @@ class PomPom:
                     #cv.Rectangle(self.resized_frame, (x, y), (x+w, y+h),
                     #        p.color, 3)
 
+    def hit(self):
+        self.score_hit += 1
+        self.score += 1
+        if self.score > 100: self.score = 100
+    def miss(self):
+        self.score_miss += 1
+        self.score -= 1
+        if self.score < 0: self.score = 0
+
     def display(self):
+
+        if self.calibration_done:
+            self.canvas.fill((0,0,0,0))
+
+            self.canvas.fill((255,255,255,100), self.score_bg)
+            progressbar = self.score_bg.inflate(-2,-2)
+            progressbar.w = progressbar.w * 100 / self.score
+
+            green = 255 * (self.score) / 100
+            red = 255 - green
+            self.canvas.fill((255,255,255,100), self.score_bg)
+            self.canvas.fill((red,green,0,100), self.progressbar)
+            msg = self.font.render("Miss: %d" % self.score_hit, True, pygame.Color("black"))
+            rect = msg.get_rect()
+            rect.topleft = (2,2)
+            self.canvas.blit(msg, rect)
+
+            msg = self.font.render("Hit: %d" %self.score_miss, True, pygame.Color("black"))
+            rect = msg.get_rect()
+            w,_ = self.display_size()
+            rect.topleft = (w-2,2)
+            self.canvas.blit(msg, rect)
+
+            for note in self.cur:
+                self.target(note.pos, pygame.Color("blue"))
+            for note in self.ok:
+                self.target(note.pos, pygame.Color("green"), filled=False)
+            for note in self.ko:
+                self.target(note.pos, pygame.Color("red"), filled=False)
+
+            color = pygame.Color("blue")
+            h,s,v,a = color.hsva
+            for note in self.pre:
+                f = (note.time - self.now()) / float(self.preavis[1] - self.preavis[0])
+                color.hsva = (h, int(s*f), v, int(a*f))
+                self.target(note.pos, color, filled=False)
+
         cv.CvtColor(self.frame, self.frame_rgb, cv.CV_BGR2RGB)
         pg_img = pygame.image.frombuffer(
                 self.frame_rgb.tostring(), cv.GetSize(self.frame), "RGB")
